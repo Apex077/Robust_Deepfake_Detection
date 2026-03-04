@@ -1,0 +1,9 @@
+# Dataset images are excluded from git (see .gitignore).
+# Download the training data from the competition and place the images here:
+#   trainval_data_final/training_data_final/
+#
+# Expected filename format: {index}_{real|fake}.png
+# Example: 0003_fake.png, 0010_real.png
+#
+# The dataset can also be kept inside trainval_data_final/ directly
+# and the config paths updated accordingly.

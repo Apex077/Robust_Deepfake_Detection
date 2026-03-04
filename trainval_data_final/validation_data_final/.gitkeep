@@ -1,0 +1,6 @@
+# Dataset images are excluded from git (see .gitignore).
+# Download the validation data from the competition and place the images here:
+#   trainval_data_final/validation_data_final/
+#
+# Expected filename format: {index}_{real|fake}.png
+# Example: 0003_fake.png, 0010_real.png

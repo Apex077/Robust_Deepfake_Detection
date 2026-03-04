@@ -1,0 +1,45 @@
+# ============================================================
+# HybridSwinNet — Default Configuration
+# NTIRE 2026 Deepfake Detection
+# ============================================================
+
+model:
+  swinv2_variant: "swinv2_base_window12_192_22k"  # timm model name
+  pretrained: true
+  freq_embed_dim: 512
+  fusion_d_model: 512
+  fusion_heads: 8
+
+training:
+  epochs: 50
+  batch_size: 32
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  # Degradation Pipeline (Spec.md §4.1)
+  jpeg_qf_range: [30, 60]
+  blur_limit: [3, 7]
+  downscale_target_px: 64          # 224 → 64 → 224
+  # FMSI (Spec.md §4.2)
+  fmsi_mask_ratio: 0.15
+  # LR schedule
+  lr_scheduler: "cosine"
+  # Checkpointing
+  checkpoint_dir: "checkpoints/"
+  save_metric: "val_auc"
+
+data:
+  image_size: 224
+  train_dir: "data/trainval_data_final/training_data_final"
+  val_dir:   "data/trainval_data_final/validation_data_final"
+  test_dir:  "data/test"           # populate when test set is released
+  num_workers: 8
+  pin_memory: true
+
+evaluation:
+  jpeg_robustness_qf: 50           # QF used in cross-degradation eval
+  output_dir: "results/"
+
+logging:
+  use_wandb: false
+  project: "ntire2026-deepfake"
+  run_name: "hybrid-swin-v1"

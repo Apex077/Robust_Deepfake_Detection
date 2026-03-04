@@ -1,0 +1,64 @@
+# ── Python ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+pip-wheel-metadata/
+
+# ── Environments ─────────────────────────────────────────────
+.env
+.venv
+env/
+venv/
+ENV/
+.conda/
+
+# ── PyTorch / ML artefacts ───────────────────────────────────
+checkpoints/
+*.pth
+*.pt
+*.onnx
+results/
+wandb/
+lightning_logs/
+mlruns/
+
+# ── Dataset archives (large binaries — track structure only) ─
+*.zip
+*.tar
+*.tar.gz
+*.gz
+
+# ── Dataset image content (too large for git) ────────────────
+# Keep directory structure via .gitkeep files instead
+trainval_data_final/training_data_final/*.png
+trainval_data_final/training_data_final/*.jpg
+trainval_data_final/validation_data_final/*.png
+trainval_data_final/validation_data_final/*.jpg
+data/raw/**/*.png
+data/raw/**/*.jpg
+data/processed/
+
+# ── Notebooks & cache ────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── IDE ──────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ───────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Docs (keep PDFs out of history if large) ─────────────────
+# *.pdf    # Uncomment if PDFs should be excluded

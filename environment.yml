@@ -1,0 +1,25 @@
+name: ivp-deepfake
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.11
+  - pip
+  - cudatoolkit=12.1          # adjust to your local CUDA version
+  - pip:
+    - torch>=2.2.0
+    - torchvision>=0.17.0
+    - timm>=0.9.16
+    - albumentations>=1.3.1
+    - opencv-python-headless>=4.9.0
+    - torchmetrics>=1.3.0
+    - wandb>=0.16.0
+    - pyyaml>=6.0.1
+    - numpy>=1.26.0
+    - Pillow>=10.2.0
+    - matplotlib>=3.8.0
+    - tqdm>=4.66.0
+    - scikit-learn>=1.4.0
