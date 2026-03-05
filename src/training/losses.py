@@ -27,8 +27,7 @@ class BCEWithLogitsLoss(nn.Module):
 
     def __init__(self, pos_weight: float = 1.0) -> None:
         super().__init__()
-        weight = torch.tensor([pos_weight])
-        self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=weight)
+        self._pos_weight_val: float = pos_weight
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
@@ -39,7 +38,8 @@ class BCEWithLogitsLoss(nn.Module):
         Returns:
             Scalar loss tensor.
         """
-        return self.loss_fn(logits, targets.float())
+        pw = torch.tensor([self._pos_weight_val], device=logits.device, dtype=logits.dtype)
+        return F.binary_cross_entropy_with_logits(logits, targets.float(), pos_weight=pw)
 
 
 class FocalLoss(nn.Module):

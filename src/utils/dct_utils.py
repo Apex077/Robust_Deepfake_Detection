@@ -18,6 +18,7 @@ Usage:
     freq_map = rgb_to_dct(image_tensor)   # (B, C, H, W) → (B, C, H, W)
 """
 
+import math
 import torch
 
 
@@ -61,7 +62,11 @@ def dct_1d(x: torch.Tensor, dim: int = -1) -> torch.Tensor:
         )
     )
 
-    return (X * phase).real
+    # Scale appropriately to prevent FP16 overflow during AMP training.
+    # Without this, the 2D DC component of a 256x256 bright image reaches 65536,
+    # which overflows the float16 maximum value (65504).
+    scale = math.sqrt(2 * n)
+    return (X * phase).real / scale
 
 
 def dct_2d(x: torch.Tensor) -> torch.Tensor:

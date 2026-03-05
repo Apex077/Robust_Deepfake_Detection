@@ -6,6 +6,7 @@ Training loop for HybridSwinNet — Spec.md §4 & §5 Phase 3.
 Features:
   - AdamW + cosine-annealing LR schedule
   - Mixed-precision training (torch.amp.autocast + GradScaler) for GPU speed
+  - Gradient accumulation (simulate larger batches on low-VRAM GPUs)
   - WeightedRandomSampler for class-balanced mini-batches
   - AUC-first metric logging via torchmetrics.BinaryAUROC
   - Best-checkpoint saving by validation AUC
@@ -15,7 +16,7 @@ Features:
 """
 
 import csv
-import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -146,6 +147,14 @@ class Trainer:
         train_cfg = config["training"]
         log_cfg = config.get("logging", {})
 
+        # Apply CUDA memory allocator config (reduces fragmentation on small VRAM)
+        cuda_alloc_conf = train_cfg.get("cuda_alloc_conf", "expandable_segments:True")
+        if cuda_alloc_conf and torch.cuda.is_available():
+            os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", cuda_alloc_conf)
+
+        # Gradient accumulation: accumulate N micro-batches before stepping optimizer
+        self.grad_accum_steps: int = train_cfg.get("gradient_accumulation_steps", 1)
+
         # ------------------------------------------------------------------
         # Optimizer & scheduler
         # ------------------------------------------------------------------
@@ -258,6 +267,9 @@ class Trainer:
             desc=f"[Train] Epoch {epoch + 1}",
             leave=False,
         )
+
+        self.optimizer.zero_grad()  # reset at start of accumulation cycle
+
         for step, (images, labels) in enumerate(pbar):
             if max_steps is not None and step >= max_steps:
                 break
@@ -265,37 +277,44 @@ class Trainer:
             images = images.to(self.device, non_blocking=True)
             labels = labels.to(self.device, non_blocking=True)
 
-            self.optimizer.zero_grad()
+            # Check whether this is the last micro-step in the accumulation window
+            is_last_accum = ((step + 1) % self.grad_accum_steps == 0) or \
+                            (max_steps is not None and step + 1 >= max_steps)
 
-            # --- Forward (with optional AMP) ---
+            # --- Forward + Backward (with optional AMP) ---
             if self.use_amp and self.scaler is not None:
                 with torch.amp.autocast("cuda"):
                     logits = self.model(images)
-                    loss = self.criterion(logits, labels)
+                    # Scale loss so gradients average across accumulation steps
+                    loss = self.criterion(logits, labels) / self.grad_accum_steps
                 self.scaler.scale(loss).backward()
-                self.scaler.unscale_(self.optimizer)
-                if self.grad_clip > 0:
-                    nn.utils.clip_grad_norm_(
-                        self.model.parameters(), self.grad_clip
-                    )
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+
+                if is_last_accum:
+                    self.scaler.unscale_(self.optimizer)
+                    if self.grad_clip > 0:
+                        nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                    self.optimizer.zero_grad()
             else:
                 logits = self.model(images)
-                loss = self.criterion(logits, labels)
+                loss = self.criterion(logits, labels) / self.grad_accum_steps
                 loss.backward()
-                if self.grad_clip > 0:
-                    nn.utils.clip_grad_norm_(
-                        self.model.parameters(), self.grad_clip
-                    )
-                self.optimizer.step()
 
-            total_loss += loss.item()
+                if is_last_accum:
+                    if self.grad_clip > 0:
+                        nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                    self.optimizer.step()
+                    self.optimizer.zero_grad()
+
+            # Recover unscaled loss for logging
+            loss_val = loss.item() * self.grad_accum_steps
+            total_loss += loss_val
             n_batches += 1
-            pbar.set_postfix(loss=f"{loss.item():.4f}")
+            pbar.set_postfix(loss=f"{loss_val:.4f}")
 
             if self.use_wandb:
-                wandb.log({"train/step_loss": loss.item()})
+                wandb.log({"train/step_loss": loss_val})
 
         return total_loss / max(n_batches, 1)
 

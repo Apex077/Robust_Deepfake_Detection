@@ -37,16 +37,20 @@ class StreamSpatial(nn.Module):
         self,
         model_name: str = "swinv2_base_window8_256.ms_in1k",
         pretrained: bool = True,
+        grad_checkpointing: bool = True,
     ) -> None:
         """
         Args:
-            model_name:  timm model identifier.
-                         - swinv2_base_window8_256.ms_in1k (IN-1k, native 256px input)
-                         - swinv2_base_window12to16_192to256.ms_in22k_ft_in1k (IN-22k)
-            pretrained:  Download pretrained weights.
+            model_name:        timm model identifier.
+                               - swinv2_base_window8_256.ms_in1k (IN-1k, native 256px)
+                               - swinv2_base_window12to16_192to256.ms_in22k_ft_in1k (22k)
+            pretrained:        Download pretrained weights.
+            grad_checkpointing: Recompute activations during backward to save VRAM.
+                               ~30% slower but cuts activation memory by ~50%.
+                               Essential for Swin-B on ≤6 GB VRAM.
 
         Note:
-            The model's native input resolution is 256×256 (window8 divides evenly).
+            Native input resolution is 256×256 (window8 divides evenly into 256/8=32).
             The augmentation pipeline must resize images to 256 accordingly.
         """
         super().__init__()
@@ -58,6 +62,10 @@ class StreamSpatial(nn.Module):
         )
         # timm exposes num_features as the backbone's output channels
         self.embed_dim: int = self.backbone.num_features
+
+        # Enable gradient checkpointing to reduce activation memory footprint
+        if grad_checkpointing:
+            self.backbone.set_grad_checkpointing(enable=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

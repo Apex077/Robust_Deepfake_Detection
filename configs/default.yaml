@@ -14,13 +14,18 @@ model:
 
 training:
   epochs: 50
-  batch_size: 16           # reduce if VRAM < 16 GB (Swin-B is large)
+  batch_size: 4             # RTX 3050 4GB: Swin-B needs small batches; use gradient_accumulation_steps to compensate
+  gradient_accumulation_steps: 4   # effective batch = 4 × 4 = 16
   lr: 1.0e-4
   weight_decay: 1.0e-4
   # Degradation Pipeline (Spec.md §4.1)
   jpeg_qf_range: [30, 60]
   blur_limit: [3, 7]
   downscale_target_px: 64          # 224 → 64 → 224
+  # Gradient checkpointing on Swin backbone (saves ~50% activation VRAM, ~30% slower)
+  grad_checkpoint: true
+  # GPU memory allocator — reduces fragmentation on small VRAM budgets
+  cuda_alloc_conf: "expandable_segments:True"
   # FMSI (Spec.md §4.2) — applied inside StreamFrequency.forward() during training
   fmsi_mask_ratio: 0.15
   # LR schedule
