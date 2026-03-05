@@ -4,7 +4,9 @@
 # ============================================================
 
 model:
-  swinv2_variant: "swinv2_base_window12_192_22k"  # timm model name
+  # swinv2_base_window8_256.ms_in1k: pretrained on ImageNet-1k, window=8 fits 224px cleanly.
+  # Alternative (if VRAM allows): swinv2_base_window12to16_192to256.ms_in22k_ft_in1k
+  swinv2_variant: "swinv2_base_window8_256.ms_in1k"
   pretrained: true
   freq_embed_dim: 512
   fusion_d_model: 512
@@ -12,32 +14,41 @@ model:
 
 training:
   epochs: 50
-  batch_size: 32
+  batch_size: 16           # reduce if VRAM < 16 GB (Swin-B is large)
   lr: 1.0e-4
   weight_decay: 1.0e-4
   # Degradation Pipeline (Spec.md §4.1)
   jpeg_qf_range: [30, 60]
   blur_limit: [3, 7]
   downscale_target_px: 64          # 224 → 64 → 224
-  # FMSI (Spec.md §4.2)
+  # FMSI (Spec.md §4.2) — applied inside StreamFrequency.forward() during training
   fmsi_mask_ratio: 0.15
   # LR schedule
   lr_scheduler: "cosine"
+  # Mixed precision (requires CUDA)
+  amp: true
+  # Gradient clipping (prevents exploding gradients with Swin)
+  grad_clip: 1.0
+  # Stratified internal split from training_data_final/ (val has no labels)
+  val_split: 0.2
+  val_split_seed: 42
   # Checkpointing
   checkpoint_dir: "checkpoints/"
   save_metric: "val_auc"
 
 data:
-  image_size: 224
+  image_size: 256            # Swin V2 window8 native resolution (256×256)
+  # training_data_final/ has 1000 labelled images (500 real, 500 fake)
   train_dir: "data/trainval_data_final/training_data_final"
-  val_dir:   "data/trainval_data_final/validation_data_final"
-  test_dir:  "data/test"           # populate when test set is released
+  # validation_data_final/ is the competition's blind test set (no labels)
+  test_dir:  "data/trainval_data_final/validation_data_final"
   num_workers: 8
   pin_memory: true
 
 evaluation:
   jpeg_robustness_qf: 50           # QF used in cross-degradation eval
   output_dir: "results/"
+  submission_dir: "submissions/"
 
 logging:
   use_wandb: false
