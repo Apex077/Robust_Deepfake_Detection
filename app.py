@@ -86,7 +86,7 @@ def main():
         st.warning("Please ensure a valid checkpoint is placed at `checkpoints/model_best.pth`.")
         return
 
-    data_dir = Path("data/trainval_data_final/training_data_final")
+    data_dir = Path("data/trainval_data_final/validation_data_final")
     
     if not data_dir.exists():
         st.error(f"Dataset directory not found: {data_dir}. Cannot load images for the showcase.")
@@ -101,38 +101,84 @@ def main():
         
     st.sidebar.header("Controls")
     
-    # Image selection
-    selected_filename = st.sidebar.selectbox("Select an Image:", [img.name for img in all_images])
-    selected_path = data_dir / selected_filename
+    # Image selection logic
+    if "selector" not in st.session_state:
+        st.session_state.selector = all_images[0].name
+
+    def pick_random():
+        import random
+        st.session_state.selector = random.choice(all_images).name
+
+    st.sidebar.button("🎲 Pick Random Image", on_click=pick_random, use_container_width=True)
     
-    # Determine Ground Truth from filename
-    ground_truth = "Unknown"
-    is_real = "_real" in selected_filename.lower()
-    is_fake = "_fake" in selected_filename.lower()
-    
-    if is_real:
-        ground_truth = "REAL"
-    elif is_fake:
-        ground_truth = "FAKE"
+    st.sidebar.selectbox(
+        "Select an Image from Dataset:", 
+        [img.name for img in all_images], 
+        key="selector"
+    )
         
+    uploaded_file = st.sidebar.file_uploader("Or Upload Custom Image", type=["png", "jpg", "jpeg"])
+
+    # Determine Ground Truth from filename (only for dataset images)
+    ground_truth = "Unknown"
+    
+    if uploaded_file is not None:
+        selected_path = None
+        # User uploaded file takes precedence
+        try:
+            image = Image.open(uploaded_file).convert("RGB")
+        except Exception as e:
+            st.error(f"Error loading uploaded image: {e}")
+            return
+    else:
+        selected_path = data_dir / st.session_state.selector
+        is_real = "_real" in st.session_state.selector.lower()
+        is_fake = "_fake" in st.session_state.selector.lower()
+        
+        if is_real:
+            ground_truth = "REAL"
+        elif is_fake:
+            ground_truth = "FAKE"
+            
+        try:
+            image = Image.open(selected_path).convert("RGB")
+        except Exception as e:
+            st.error(f"Error loading image: {e}")
+            return
     
     # Load and display selected image
     col1, col2 = st.columns([1, 1])
     
     with col1:
         st.markdown("#### Input Image")
-        try:
-            image = Image.open(selected_path).convert("RGB")
-            st.image(image, use_container_width=True)
-            st.markdown(f"<div class='gt-text'>Ground Truth: <strong>{ground_truth}</strong></div>", unsafe_allow_html=True)
-        except Exception as e:
-            st.error(f"Error loading image: {e}")
-            return
+        st.image(image, use_container_width=True)
+
             
     with col2:
         st.markdown("#### Model Analysis")
         
-        threshold = st.sidebar.slider("Decision Threshold (Fake >= limit)", min_value=0.0, max_value=1.0, value=0.5, step=0.01)
+        # Load optimal threshold from previous evaluation if available
+        default_threshold = 0.50
+        analysis_path = Path("results/overfitting/overfitting_analysis.json")
+        if analysis_path.exists():
+            try:
+                import json
+                with open(analysis_path) as f:
+                    analysis_data = json.load(f)
+                val_opt = analysis_data.get("validation", {}).get("optimal_threshold")
+                if val_opt is not None:
+                    default_threshold = float(val_opt)
+            except Exception as e:
+                st.warning(f"Failed to load optimal threshold, defaulting to 0.5: {e}")
+        
+        threshold = st.sidebar.slider(
+            "Decision Threshold (Fake >= limit)", 
+            min_value=0.0, 
+            max_value=1.0, 
+            value=default_threshold, 
+            step=0.01,
+            help="Threshold dynamically loaded from validation evaluation if available."
+        )
         
         if st.button("Run Prediction", type="primary", use_container_width=True):
             with st.spinner("Analyzing image..."):
@@ -153,13 +199,6 @@ def main():
                 
                 st.progress(prob, text=f"Confidence of being Fake: {prob:.2%}")
                 
-                # Ground truth comparison
-                if ground_truth != "Unknown":
-                    if ground_truth == pred_label:
-                        st.success(f"✅ Correct prediction! Both are {ground_truth}.")
-                    else:
-                        st.error(f"❌ Incorrect prediction. Expected {ground_truth}, got {pred_label}.")
-                        
                 st.markdown("---")
                 
                 col_metric1, col_metric2 = st.columns(2)

@@ -1,15 +1,20 @@
 """
 augmentations.py
 ----------------
-The Degradation Pipeline as specified in Spec.md §4.1.
+The Degradation Pipeline as specified in Spec.md §4.1, with additional
+augmentations to combat overfitting on the small (~800 sample) training set.
 
 Applies (stochastically) for training:
   1. JPEG compression   — quality factor uniform in [30, 60]
   2. Gaussian blur      — kernel size odd in {3..7}
   3. Severe downscale   — 224 → 64 → 224 (simulates reconstruction artefacts)
   4. Horizontal flip    — standard geometric augmentation
-  5. Color jitter       — brightness / contrast / saturation variation
-  6. ImageNet normalise + to-tensor
+  5. Random 90° rotate  — adds rotational variety
+  6. Color jitter       — brightness / contrast / saturation variation (stronger)
+  7. Gaussian noise     — low-level intensity noise
+  8. Grid distortion    — mild geometric warp (breaks spatial fingerprints)
+  9. Coarse dropout     — random patch erasure (CutOut-style)
+  10. ImageNet normalise + to-tensor
 
 For validation / inference — only resize + normalise.
 
@@ -34,7 +39,8 @@ _SCALE: float = DOWNSCALE_TARGET / IMAGE_SIZE  # 64/256 = 0.25
 
 def build_train_transform() -> A.Compose:
     """
-    Returns the hostile augmentation pipeline for training (Spec.md §4.1).
+    Returns the hostile augmentation pipeline for training (Spec.md §4.1)
+    extended with extra regularisation augmentations to reduce overfitting.
     Expects numpy HWC uint8 images as input.
     """
     return A.Compose([
@@ -66,11 +72,34 @@ def build_train_transform() -> A.Compose:
 
         # ---- Standard augmentations for generalization ------------------
         A.HorizontalFlip(p=0.5),
+
+        # 90° random rotations — increases rotational variety cheaply
+        A.RandomRotate90(p=0.3),
+
+        # Stronger colour jitter (p and magnitudes both bumped up)
         A.ColorJitter(
-            brightness=0.2,
-            contrast=0.2,
-            saturation=0.2,
-            hue=0.05,
+            brightness=0.3,
+            contrast=0.3,
+            saturation=0.3,
+            hue=0.08,
+            p=0.6,
+        ),
+
+        # ---- Extra anti-overfitting augmentations -----------------------
+        # Additive Gaussian noise — std_range is in [0,1] relative to pixel range
+        # std_range=(0.015, 0.04) ≈ var_limit=(10, 50) on uint8 images / 255
+        A.GaussNoise(std_range=(0.015, 0.04), p=0.3),
+
+
+        # Mild grid distortion — breaks spatial fingerprints without destroying structure
+        A.GridDistortion(num_steps=5, distort_limit=0.2, p=0.3),
+
+        # Random erasing (CutOut) — drops up to 8 patches of ~12%×12% image size
+        A.CoarseDropout(
+            num_holes_range=(1, 8),
+            hole_height_range=(0.05, 0.12),   # fraction of image height
+            hole_width_range=(0.05, 0.12),    # fraction of image width
+            fill=0,
             p=0.3,
         ),
 

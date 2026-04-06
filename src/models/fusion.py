@@ -41,7 +41,7 @@ class CrossAttentionFusion(nn.Module):
         d_b: int = 512,
         d_model: int = 512,
         num_heads: int = 8,
-        dropout: float = 0.1,
+        dropout: float = 0.3,   # raised from 0.1 → 0.3 to regularise the small dataset
     ) -> None:
         super().__init__()
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
@@ -62,18 +62,20 @@ class CrossAttentionFusion(nn.Module):
         self.gate = nn.Sequential(
             nn.Linear(d_model * 2, d_model),
             nn.ReLU(inplace=True),
+            nn.Dropout(dropout),          # added: regularise the gate MLP
             nn.Linear(d_model, 2),
             nn.Softmax(dim=-1),
         )
 
         # Final classification head — outputs raw logit
+        # Three dropout layers + two linear + LayerNorm for heavy regularisation
         self.head = nn.Sequential(
             nn.LayerNorm(d_model),
             nn.Dropout(dropout),
-            nn.Linear(d_model, 64),
+            nn.Linear(d_model, 128),
             nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(64, 1),
+            nn.Dropout(dropout),          # added extra dropout after activation
+            nn.Linear(128, 1),
         )
 
     def forward(

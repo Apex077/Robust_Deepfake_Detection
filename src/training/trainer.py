@@ -5,11 +5,17 @@ Training loop for HybridSwinNet — Spec.md §4 & §5 Phase 3.
 
 Features:
   - AdamW + cosine-annealing LR schedule
+  - Layer-wise LR decay: earlier Swin blocks get lower LR (prevents
+    overfitting the pretrained backbone on the tiny dataset)
   - Mixed-precision training (torch.amp.autocast + GradScaler) for GPU speed
   - Gradient accumulation (simulate larger batches on low-VRAM GPUs)
   - WeightedRandomSampler for class-balanced mini-batches
+  - Mixup data augmentation (alpha=0.4) — interpolates pairs of samples
+    and their labels to prevent memorisation
+  - Label-smoothed BCEWithLogitsLoss — prevents over-confidence
   - AUC-first metric logging via torchmetrics.BinaryAUROC
   - Best-checkpoint saving by validation AUC
+  - Early stopping (patience-based) to halt before overfitting deepens
   - Optional Weights & Biases (wandb) logging
   - Resume-from-checkpoint support
   - Gradient clipping to prevent training instability
@@ -20,6 +26,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch import GradScaler
@@ -111,6 +118,143 @@ def build_dataloaders(
 
 
 # ---------------------------------------------------------------------------
+# Layer-wise LR decay helpers
+# ---------------------------------------------------------------------------
+
+def _build_layer_wise_param_groups(
+    model: nn.Module,
+    base_lr: float,
+    weight_decay: float,
+    layer_lr_decay: float,
+) -> list[dict]:
+    """
+    Build parameter groups with exponentially decaying LR for Swin backbone.
+
+    Swin V2 has 4 stages (depths 0..3). We assign:
+        LR_stage = base_lr × decay^(num_stages - 1 - stage_idx)
+
+    All non-backbone parameters (frequency stream, fusion, head) use base_lr.
+
+    Args:
+        model:           HybridSwinNet instance.
+        base_lr:         Base learning rate (for the newest layers).
+        weight_decay:    Weight decay for AdamW.
+        layer_lr_decay:  Multiplicative factor per stage (e.g. 0.75).
+
+    Returns:
+        List of dicts suitable for torch.optim.AdamW(param_groups=...).
+    """
+    # Collect Swin stage parameters
+    backbone = getattr(model, "stream_a", None)
+    swin = getattr(backbone, "backbone", None) if backbone is not None else None
+
+    if swin is None or not hasattr(swin, "layers"):
+        # Fallback: single group with base_lr for everything
+        print("[LR] Swin backbone not accessible via model.stream_a.backbone.layers — using flat LR.")
+        return [{"params": model.parameters(), "lr": base_lr, "weight_decay": weight_decay}]
+
+    num_stages = len(swin.layers)
+    stage_params: list[list] = [[] for _ in range(num_stages)]
+    stage_names: list[set[str]] = [set() for _ in range(num_stages)]
+
+    for stage_idx, stage in enumerate(swin.layers):
+        for name, param in stage.named_parameters():
+            if param.requires_grad:
+                stage_params[stage_idx].append(param)
+                stage_names[stage_idx].add(name)
+
+    # Collect backbone params that don't belong to any stage (e.g. patch_embed, norm)
+    stage_param_ids = {id(p) for group in stage_params for p in group}
+    backbone_other_params = [
+        p for p in swin.parameters()
+        if id(p) not in stage_param_ids and p.requires_grad
+    ]
+
+    # Collect all non-backbone params (freq stream, fusion, head)
+    backbone_all_ids = {id(p) for p in swin.parameters()}
+    other_params = [
+        p for p in model.parameters()
+        if id(p) not in backbone_all_ids and p.requires_grad
+    ]
+
+    param_groups: list[dict] = []
+
+    # Stage groups: stage 0 (earliest) gets lowest LR
+    for stage_idx in range(num_stages):
+        # Deeper stages (higher idx) get higher LR
+        lr_multiplier = layer_lr_decay ** (num_stages - 1 - stage_idx)
+        stage_lr = base_lr * lr_multiplier
+        if stage_params[stage_idx]:
+            param_groups.append({
+                "params": stage_params[stage_idx],
+                "lr": stage_lr,
+                "weight_decay": weight_decay,
+                "name": f"swin_stage_{stage_idx}",
+            })
+
+    # Backbone non-stage params (patch embedding etc.) — use lowest LR
+    if backbone_other_params:
+        param_groups.append({
+            "params": backbone_other_params,
+            "lr": base_lr * (layer_lr_decay ** num_stages),
+            "weight_decay": weight_decay,
+            "name": "swin_other",
+        })
+
+    # Non-backbone params use full base_lr
+    if other_params:
+        param_groups.append({
+            "params": other_params,
+            "lr": base_lr,
+            "weight_decay": weight_decay,
+            "name": "heads_and_freq",
+        })
+
+    print("[LR] Layer-wise LR groups:")
+    for g in param_groups:
+        n_params = sum(p.numel() for p in g["params"])
+        print(f"  {g.get('name', '?'):25s} | lr={g['lr']:.2e} | params={n_params:,}")
+
+    return param_groups
+
+
+# ---------------------------------------------------------------------------
+# Mixup helper
+# ---------------------------------------------------------------------------
+
+def _mixup_batch(
+    images: torch.Tensor,
+    labels: torch.Tensor,
+    alpha: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Apply Mixup augmentation (Zhang et al., 2018) to a single mini-batch.
+
+    Randomly draws a mixing coefficient λ ~ Beta(alpha, alpha) and produces:
+        images_mix = λ * images + (1-λ) * images[perm]
+        labels_mix = λ * labels + (1-λ) * labels[perm]
+
+    The mixed labels are soft floats, compatible with BCEWithLogitsLoss.
+
+    Args:
+        images: (B, C, H, W) batch
+        labels: (B,) integer labels
+        alpha:  Beta distribution concentration parameter (>0). Higher α
+                → stronger mixing. Typical: 0.2–0.4.
+
+    Returns:
+        (mixed_images, mixed_labels_float)
+    """
+    lam = float(np.random.beta(alpha, alpha))
+    batch_size = images.size(0)
+    perm = torch.randperm(batch_size, device=images.device)
+
+    mixed_images = lam * images + (1.0 - lam) * images[perm]
+    mixed_labels = lam * labels.float() + (1.0 - lam) * labels[perm].float()
+    return mixed_images, mixed_labels
+
+
+# ---------------------------------------------------------------------------
 # Trainer
 # ---------------------------------------------------------------------------
 
@@ -155,24 +299,39 @@ class Trainer:
         # Gradient accumulation: accumulate N micro-batches before stepping optimizer
         self.grad_accum_steps: int = train_cfg.get("gradient_accumulation_steps", 1)
 
+        # Mixup
+        self.mixup_alpha: float = train_cfg.get("mixup_alpha", 0.0)
+
+        # Early stopping
+        self.early_stopping_patience: int = train_cfg.get("early_stopping_patience", 0)
+        self._patience_counter: int = 0
+
         # ------------------------------------------------------------------
-        # Optimizer & scheduler
+        # Optimizer with layer-wise LR decay
         # ------------------------------------------------------------------
-        self.optimizer = torch.optim.AdamW(
-            self.model.parameters(),
-            lr=train_cfg.get("lr", 1e-4),
-            weight_decay=train_cfg.get("weight_decay", 1e-4),
+        base_lr: float = train_cfg.get("lr", 1e-4)
+        weight_decay: float = train_cfg.get("weight_decay", 5e-3)
+        layer_lr_decay: float = train_cfg.get("layer_lr_decay", 1.0)
+
+        param_groups = _build_layer_wise_param_groups(
+            self.model, base_lr, weight_decay, layer_lr_decay
         )
+        self.optimizer = torch.optim.AdamW(param_groups)
+
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             self.optimizer,
-            T_max=train_cfg.get("epochs", 50),
+            T_max=train_cfg.get("epochs", 60),
             eta_min=1e-6,
         )
 
         # ------------------------------------------------------------------
-        # Loss
+        # Loss — with label smoothing
         # ------------------------------------------------------------------
-        self.criterion = BCEWithLogitsLoss(pos_weight=1.0)
+        label_smoothing: float = train_cfg.get("label_smoothing", 0.0)
+        self.criterion = BCEWithLogitsLoss(
+            pos_weight=1.0,
+            label_smoothing=label_smoothing,
+        )
 
         # ------------------------------------------------------------------
         # AMP (mixed precision)
@@ -249,7 +408,7 @@ class Trainer:
 
     def train_epoch(self, epoch: int, max_steps: Optional[int] = None) -> float:
         """
-        Train for one epoch.
+        Train for one epoch.  Applies Mixup when mixup_alpha > 0.
 
         Args:
             epoch:     Current epoch index (0-based).
@@ -276,6 +435,10 @@ class Trainer:
 
             images = images.to(self.device, non_blocking=True)
             labels = labels.to(self.device, non_blocking=True)
+
+            # Apply Mixup augmentation (only during training, when alpha > 0)
+            if self.mixup_alpha > 0.0:
+                images, labels = _mixup_batch(images, labels, self.mixup_alpha)
 
             # Check whether this is the last micro-step in the accumulation window
             is_last_accum = ((step + 1) % self.grad_accum_steps == 0) or \
@@ -379,13 +542,15 @@ class Trainer:
         dry_run: bool = False,
     ) -> None:
         """
-        Run training for config['training']['epochs'] epochs.
+        Run training for config['training']['epochs'] epochs, with early
+        stopping when val AUC hasn't improved for `early_stopping_patience`
+        consecutive epochs.
 
         Args:
             max_steps: Stop each epoch after this many batches (smoke test).
             dry_run:   Run a single forward pass and exit immediately.
         """
-        epochs = self.config["training"].get("epochs", 50)
+        epochs = self.config["training"].get("epochs", 60)
 
         if dry_run:
             print("[Dry Run] Running a single forward pass …")
@@ -400,7 +565,9 @@ class Trainer:
 
         print(
             f"[Train] Device: {self.device} | AMP: {self.use_amp} | "
-            f"Epochs: {epochs} | Batches/epoch: {len(self.train_loader)}"
+            f"Epochs: {epochs} | Batches/epoch: {len(self.train_loader)} | "
+            f"Mixup α: {self.mixup_alpha} | "
+            f"Early-stop patience: {self.early_stopping_patience}"
         )
 
         for epoch in range(self.start_epoch, epochs):
@@ -437,13 +604,29 @@ class Trainer:
             self._save_history()
 
             # Save best checkpoint
-            if val_auc > self.best_auc:
+            improved = val_auc > self.best_auc
+            if improved:
                 self.best_auc = val_auc
                 self.save_checkpoint(tag="best")
+                self._patience_counter = 0
+            else:
+                self._patience_counter += 1
 
             # Save periodic checkpoint every 10 epochs
             if (epoch + 1) % 10 == 0:
                 self.save_checkpoint(tag=f"epoch{epoch + 1:03d}")
+
+            # Early stopping check
+            if (
+                self.early_stopping_patience > 0
+                and self._patience_counter >= self.early_stopping_patience
+            ):
+                print(
+                    f"[EarlyStopping] Val AUC has not improved for "
+                    f"{self._patience_counter} epochs. "
+                    f"Best AUC: {self.best_auc:.4f}. Stopping."
+                )
+                break
 
             if max_steps is not None:
                 print(f"[Train] max_steps={max_steps} reached — exiting early.")

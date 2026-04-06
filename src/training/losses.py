@@ -4,7 +4,7 @@ losses.py
 Loss functions for binary deepfake classification.
 
 Implements:
-  - BCEWithLogitsLoss (default, numerically stable)
+  - BCEWithLogitsLoss (default, numerically stable) — with optional label smoothing
   - FocalLoss (for class-imbalanced datasets)
 
 Note: The model outputs raw logits (no sigmoid). Always use these
@@ -18,28 +18,45 @@ import torch.nn.functional as F
 
 class BCEWithLogitsLoss(nn.Module):
     """
-    Numerically stable BCE loss for binary classification.
+    Numerically stable BCE loss for binary classification with optional
+    label smoothing to prevent the model from becoming over-confident on
+    the small training set.
+
+    Label smoothing converts hard 0/1 targets to:
+        y_smooth = y * (1 - ε) + 0.5 * ε
+    so the model is never penalised for assigning a small probability to
+    the wrong class, acting as an implicit regulariser.
 
     Args:
-        pos_weight: Weight for positive (fake) class.
-                    Set > 1.0 if real/fake ratio is imbalanced.
+        pos_weight:      Weight for positive (fake) class. Set > 1.0 if
+                         real/fake ratio is imbalanced.
+        label_smoothing: Smoothing factor ε ∈ [0, 1). 0.0 disables smoothing.
+                         Typical: 0.05–0.15.
     """
 
-    def __init__(self, pos_weight: float = 1.0) -> None:
+    def __init__(self, pos_weight: float = 1.0, label_smoothing: float = 0.0) -> None:
         super().__init__()
         self._pos_weight_val: float = pos_weight
+        self.label_smoothing: float = label_smoothing
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
         Args:
             logits:  (B,) — raw model outputs (no sigmoid)
-            targets: (B,) — integer labels: 0=real, 1=fake
+            targets: (B,) — integer or float labels: 0=real, 1=fake
 
         Returns:
             Scalar loss tensor.
         """
+        targets_f = targets.float()
+
+        # Apply label smoothing: pull hard 0/1 targets toward 0.5
+        if self.label_smoothing > 0.0:
+            eps = self.label_smoothing
+            targets_f = targets_f * (1.0 - eps) + 0.5 * eps
+
         pw = torch.tensor([self._pos_weight_val], device=logits.device, dtype=logits.dtype)
-        return F.binary_cross_entropy_with_logits(logits, targets.float(), pos_weight=pw)
+        return F.binary_cross_entropy_with_logits(logits, targets_f, pos_weight=pw)
 
 
 class FocalLoss(nn.Module):

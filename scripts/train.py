@@ -93,9 +93,10 @@ def main() -> None:
         pretrained=model_cfg.get("pretrained", True),
         freq_embed_dim=model_cfg.get("freq_embed_dim", 512),
         freq_branch_dim=model_cfg.get("freq_branch_dim", 256),
-        fmsi_mask_ratio=config["training"].get("fmsi_mask_ratio", 0.15),
+        fmsi_mask_ratio=config["training"].get("fmsi_mask_ratio", 0.30),
         fusion_d_model=model_cfg.get("fusion_d_model", 512),
         fusion_heads=model_cfg.get("fusion_heads", 8),
+        fusion_dropout=model_cfg.get("fusion_dropout", 0.3),
     )
 
     n_params = sum(p.numel() for p in model.parameters()) / 1e6

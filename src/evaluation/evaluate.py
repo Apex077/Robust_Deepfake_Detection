@@ -37,7 +37,10 @@ from src.models.hybrid_net import HybridSwinNet
 
 try:
     import matplotlib.pyplot as plt
-    from sklearn.metrics import roc_auc_score, roc_curve
+    from sklearn.metrics import (
+        roc_auc_score, roc_curve, accuracy_score, precision_score,
+        recall_score, f1_score, confusion_matrix, ConfusionMatrixDisplay
+    )
     _PLOT_AVAILABLE = True
 except ImportError:
     _PLOT_AVAILABLE = False
@@ -145,11 +148,22 @@ def run_evaluation(
     all_labels_np = np.array(all_labels)
 
     # ------------------------------------------------------------------
-    # Overall AUC
+    # Overall AUC and Additional Metrics
     # ------------------------------------------------------------------
     overall_auc = float(roc_auc_score(all_labels_np, all_probs_np))
+    all_preds_np = (all_probs_np > 0.5).astype(int)
+
+    accuracy = float(accuracy_score(all_labels_np, all_preds_np))
+    precision = float(precision_score(all_labels_np, all_preds_np, zero_division=0))
+    recall = float(recall_score(all_labels_np, all_preds_np, zero_division=0))
+    f1 = float(f1_score(all_labels_np, all_preds_np, zero_division=0))
+
     print(f"\n{'='*50}")
     print(f"  Overall AUC-ROC: {overall_auc:.4f}")
+    print(f"  Accuracy:        {accuracy:.4f}")
+    print(f"  Precision:       {precision:.4f}")
+    print(f"  Recall:          {recall:.4f}")
+    print(f"  F1-Score:        {f1:.4f}")
     print(f"{'='*50}")
 
     # ------------------------------------------------------------------
@@ -191,6 +205,10 @@ def run_evaluation(
         "data_dir": str(data_dir),
         "jpeg_qf": jpeg_qf,
         "overall_auc": overall_auc,
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "f1_score": f1,
         "per_generator_auc": per_gen_auc,
         "n_samples": len(all_labels),
     }
@@ -200,9 +218,10 @@ def run_evaluation(
     print(f"\n[Eval] Metrics saved → {metrics_path}")
 
     # ------------------------------------------------------------------
-    # ROC curve plot
+    # ROC curve plot and Confusion Matrix
     # ------------------------------------------------------------------
     if _PLOT_AVAILABLE:
+        # ROC Curve
         fpr, tpr, _ = roc_curve(all_labels_np, all_probs_np)
         fig, ax = plt.subplots(figsize=(7, 6))
         ax.plot(fpr, tpr, lw=2, color="#4C72B0",
@@ -221,8 +240,23 @@ def run_evaluation(
         fig.savefig(roc_path, dpi=150)
         plt.close(fig)
         print(f"[Eval] ROC curve saved  → {roc_path}")
+
+        # Confusion Matrix
+        cm = confusion_matrix(all_labels_np, all_preds_np)
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["Real", "Fake"])
+        fig_cm, ax_cm = plt.subplots(figsize=(6, 5))
+        disp.plot(ax=ax_cm, cmap="Blues", values_format="d", colorbar=False)
+        title_cm = "Confusion Matrix"
+        if jpeg_qf:
+            title_cm += f" [JPEG QF={jpeg_qf}]"
+        ax_cm.set_title(title_cm)
+        fig_cm.tight_layout()
+        cm_path = output_path / f"confusion_matrix{tag}.png"
+        fig_cm.savefig(cm_path, dpi=150)
+        plt.close(fig_cm)
+        print(f"[Eval] Confusion matrix saved → {cm_path}")
     else:
-        print("[WARN] matplotlib/sklearn not available — skipping ROC plot.")
+        print("[WARN] matplotlib/sklearn not available — skipping ROC plot and CM.")
 
     return metrics
 

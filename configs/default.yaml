@@ -11,13 +11,18 @@ model:
   freq_embed_dim: 512
   fusion_d_model: 512
   fusion_heads: 8
+  # Increased from 0.1 → 0.3 to fight overfitting on the small dataset
+  fusion_dropout: 0.3
 
 training:
-  epochs: 50
+  epochs: 60                # Budget increased but early stopping kicks in
   batch_size: 4             # RTX 3050 4GB: Swin-B needs small batches; use gradient_accumulation_steps to compensate
   gradient_accumulation_steps: 4   # effective batch = 4 × 4 = 16
   lr: 1.0e-4
-  weight_decay: 1.0e-4
+  # Increased from 1e-4 → 5e-3: stronger L2 regularisation for 800-sample dataset
+  weight_decay: 5.0e-3
+  # Layer-wise LR decay: backbone stages get lr × decay^depth (0.75 ≈ 4 layers → 32% of head LR)
+  layer_lr_decay: 0.75
   # Degradation Pipeline (Spec.md §4.1)
   jpeg_qf_range: [30, 60]
   blur_limit: [3, 7]
@@ -26,8 +31,8 @@ training:
   grad_checkpoint: true
   # GPU memory allocator — reduces fragmentation on small VRAM budgets
   cuda_alloc_conf: "expandable_segments:True"
-  # FMSI (Spec.md §4.2) — applied inside StreamFrequency.forward() during training
-  fmsi_mask_ratio: 0.15
+  # FMSI (Spec.md §4.2) — raised from 0.15 → 0.30 for stronger frequency regularisation
+  fmsi_mask_ratio: 0.30
   # LR schedule
   lr_scheduler: "cosine"
   # Mixed precision (requires CUDA)
@@ -40,6 +45,13 @@ training:
   # Checkpointing
   checkpoint_dir: "checkpoints/"
   save_metric: "val_auc"
+  # --- Anti-overfitting additions ---
+  # Label smoothing ε: converts hard 0/1 targets to 0.05/0.95, prevents overconfidence
+  label_smoothing: 0.1
+  # Mixup: linearly interpolates pairs of training samples and their labels
+  mixup_alpha: 0.4
+  # Early stopping: halt training if val AUC hasn't improved for this many epochs
+  early_stopping_patience: 8
 
 data:
   image_size: 256            # Swin V2 window8 native resolution (256×256)
@@ -58,4 +70,4 @@ evaluation:
 logging:
   use_wandb: false
   project: "ntire2026-deepfake"
-  run_name: "hybrid-swin-v1"
+  run_name: "hybrid-swin-v2-antioverfitting"
