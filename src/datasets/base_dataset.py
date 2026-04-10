@@ -122,24 +122,28 @@ class DeepfakeDataset(Dataset):
     def from_split(
         cls,
         root: str,
-        val_split: float = 0.2,
+        val_split: float = 0.125,
+        test_split: float = 0.125,
         seed: int = 42,
         train_transform: Optional[Callable] = None,
         val_transform: Optional[Callable] = None,
-    ) -> Tuple["DeepfakeDataset", "DeepfakeDataset"]:
+        test_transform: Optional[Callable] = None,
+    ) -> Tuple["DeepfakeDataset", "DeepfakeDataset", "DeepfakeDataset"]:
         """
         Load all labelled images from *root* and split into stratified
-        train / val subsets.
+        train / val / test subsets.
 
         Args:
             root:            Directory containing labelled images.
             val_split:       Fraction of images to use for validation [0, 1).
+            test_split:      Fraction of images to use for testing [0, 1).
             seed:            Random seed for reproducibility.
             train_transform: Transform applied to training samples.
             val_transform:   Transform applied to validation samples.
+            test_transform:  Transform applied to testing samples.
 
         Returns:
-            (train_dataset, val_dataset)
+            (train_dataset, val_dataset, test_dataset)
         """
         full = cls.from_dir(root, transform=None)
         rng = random.Random(seed)
@@ -152,17 +156,26 @@ class DeepfakeDataset(Dataset):
 
         n_real_val = max(1, int(len(real_idx) * val_split))
         n_fake_val = max(1, int(len(fake_idx) * val_split))
+        
+        n_real_test = max(1, int(len(real_idx) * test_split))
+        n_fake_test = max(1, int(len(fake_idx) * test_split))
 
         val_idx = set(real_idx[:n_real_val] + fake_idx[:n_fake_val])
-        train_idx = [i for i in range(len(full.samples)) if i not in val_idx]
+        test_idx = set(real_idx[n_real_val:n_real_val+n_real_test] + fake_idx[n_fake_val:n_fake_val+n_fake_test])
+        
+        train_idx = [i for i in range(len(full.samples)) if i not in val_idx and i not in test_idx]
+        
         val_idx_list = list(val_idx)
+        test_idx_list = list(test_idx)
 
         train_samples = [full.samples[i] for i in train_idx]
         val_samples = [full.samples[i] for i in val_idx_list]
+        test_samples = [full.samples[i] for i in test_idx_list]
 
         return (
             cls(train_samples, transform=train_transform),
             cls(val_samples, transform=val_transform),
+            cls(test_samples, transform=test_transform),
         )
 
     # ------------------------------------------------------------------

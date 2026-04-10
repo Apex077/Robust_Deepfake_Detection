@@ -31,7 +31,7 @@ class HybridSwinNet(nn.Module):
 
     def __init__(
         self,
-        swinv2_variant: str = "swinv2_base_window8_256.ms_in1k",
+        swinv2_variant: str = "swinv2_tiny_window8_256.ms_in1k",
         pretrained: bool = True,
         freq_branch_dim: int = 256,
         freq_embed_dim: int = 512,

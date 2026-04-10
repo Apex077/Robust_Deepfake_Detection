@@ -156,12 +156,14 @@ if __name__ == "__main__":
     train_cfg = config["training"]
     transform = build_val_transform()  # same deterministic pipeline for both
     
-    train_ds, val_ds = DeepfakeDataset.from_split(
+    train_ds, val_ds, test_ds = DeepfakeDataset.from_split(
         root=args.data_dir,
-        val_split=train_cfg.get("val_split", 0.2),
+        val_split=train_cfg.get("val_split", 0.125),
+        test_split=train_cfg.get("test_split", 0.125),
         seed=train_cfg.get("val_split_seed", 42),
         train_transform=transform,
         val_transform=transform,
+        test_transform=transform,
     )
     
     # ------------------------------------------------------------------
@@ -195,11 +197,18 @@ if __name__ == "__main__":
     val_metrics = _evaluate_split(
         "Validation", val_ds, model, device, args.batch_size, args.num_workers, out_dir
     )
+
+    print("\n" + "="*60)
+    print("  EVALUATING ON TEST SPLIT")
+    print("="*60)
+    test_metrics = _evaluate_split(
+        "Test", test_ds, model, device, args.batch_size, args.num_workers, out_dir
+    )
     
     print("\n" + "="*60)
     print("  OVERFITTING/UNDERFITTING ANALYSIS")
     print("="*60)
-    print(f"{'Metric':<15} | {'Training':<10} | {'Validation':<10} | {'Diff (Train - Val)':<15}")
+    print(f"{'Metric':<15} | {'Training':<10} | {'Validation':<10} | {'Test':<10} | {'Diff (Train - Val)':<15}")
     print("-" * 60)
     
     keys_to_compare = ["overall_auc", "accuracy", "precision", "recall", "f1_score"]
@@ -207,12 +216,13 @@ if __name__ == "__main__":
     for key in keys_to_compare:
         train_val = train_metrics.get(key, 0.0)
         val_val = val_metrics.get(key, 0.0)
+        test_val = test_metrics.get(key, 0.0)
         diff = train_val - val_val
-        print(f"{key.capitalize():<15} | {train_val:<10.4f} | {val_val:<10.4f} | {diff:<15.4f}")
+        print(f"{key.capitalize():<15} | {train_val:<10.4f} | {val_val:<10.4f} | {test_val:<10.4f} | {diff:<15.4f}")
         
     # Save combined json
     out_json = out_dir / "overfitting_analysis.json"
     with open(out_json, "w") as f:
-        json.dump({"train": train_metrics, "validation": val_metrics}, f, indent=2)
+        json.dump({"train": train_metrics, "validation": val_metrics, "test": test_metrics}, f, indent=2)
 
     print(f"\n[Done] Analysis saved in {args.output_dir}")

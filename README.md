@@ -120,7 +120,7 @@ Predictions are submitted as a plain-text file with one probability per line (se
 - [x] `StreamFrequency` — DCT → dual-branch CNN (LF + HF)
 - [ ] Validate output shapes with unit tests
 
-### Phase 3 — Fusion & Training Loop *(Status: Completed)*
+### Phase 3 — Fusion & Training Loop *(Status: Completed)*Do 
 - [x] `CrossAttentionFusion` — quality-gated cross-attention + classification head
 - [x] `HybridSwinNet` — top-level model composition
 - [x] `Trainer` implementation with AdamW, cosine LR, and Mixup augmentation

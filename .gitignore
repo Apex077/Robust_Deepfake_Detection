@@ -37,6 +37,8 @@ mlruns/
 
 # ── Dataset image content (too large for git) ────────────────
 # Keep directory structure via .gitkeep files instead
+data/merged_training/
+merged_training/*.*
 trainval_data_final/training_data_final/*.png
 trainval_data_final/training_data_final/*.jpg
 trainval_data_final/validation_data_final/*.png

@@ -35,7 +35,7 @@ class StreamSpatial(nn.Module):
 
     def __init__(
         self,
-        model_name: str = "swinv2_base_window8_256.ms_in1k",
+        model_name: str = "swinv2_tiny_window8_256.ms_in1k",
         pretrained: bool = True,
         grad_checkpointing: bool = True,
     ) -> None:

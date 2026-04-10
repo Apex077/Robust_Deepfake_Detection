@@ -136,24 +136,19 @@ class StreamFrequency(nn.Module):
         freq_map: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Split DCT map into Low-Frequency (top-left quadrant) and
-        High-Frequency (remainder) sub-bands.
-
-        LF sub-band is upsampled back to the original spatial size so both
-        branches receive the same spatial resolution.
+        Split DCT map into Low-Frequency (top-left 1/16th) and
+        High-Frequency (bottom-right 9/16th) sub-bands.
 
         Args:
             freq_map: (B, C, H, W)
 
         Returns:
-            (lf, hf) — both (B, C, H, W)
+            (lf, hf)
         """
-        h, w = freq_map.shape[-2], freq_map.shape[-1]
-        lf_small = freq_map[..., : h // 2, : w // 2]           # (B, C, H/2, W/2)
-        lf = F.interpolate(
-            lf_small, size=(h, w), mode="bilinear", align_corners=False
-        )
-        hf = freq_map - lf                                       # residual HF
+        h, w = freq_map.shape[-2:]
+        lf_h, lf_w = h // 4, w // 4  # 1/16 area
+        lf = freq_map[..., :lf_h, :lf_w]
+        hf = freq_map[..., lf_h:, lf_w:]
         return lf, hf
 
     # ------------------------------------------------------------------

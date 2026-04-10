@@ -82,7 +82,10 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Dataloaders
     # ------------------------------------------------------------------
-    train_loader, val_loader = build_dataloaders(config, train_transform, val_transform)
+    test_transform = build_val_transform()
+    train_loader, val_loader, test_loader = build_dataloaders(
+        config, train_transform, val_transform, test_transform
+    )
 
     # ------------------------------------------------------------------
     # Model
@@ -114,6 +117,7 @@ def main() -> None:
         config=config,
         device=device,
         output_dir=output_dir,
+        test_loader=test_loader,
     )
 
     # Resume?

@@ -55,31 +55,34 @@ def build_dataloaders(
     config: dict,
     train_transform,
     val_transform,
-) -> tuple[DataLoader, DataLoader]:
+    test_transform=None,
+) -> tuple[DataLoader, DataLoader, DataLoader]:
     """
-    Build train and validation DataLoaders from config.
+    Build train, val, and test DataLoaders from config.
 
     Uses DeepfakeDataset.from_split() to create a stratified internal
-    80/20 split from training_data_final/ (the official validation set
-    has no labels and is reserved for submission inference).
+    split from the training_data_final directory.
 
     Args:
         config:          Full config dict (from configs/default.yaml).
         train_transform: Albumentations transform for training.
         val_transform:   Albumentations transform for validation.
+        test_transform:  Albumentations transform for testing.
 
     Returns:
-        (train_loader, val_loader)
+        (train_loader, val_loader, test_loader)
     """
     data_cfg = config["data"]
     train_cfg = config["training"]
 
-    train_ds, val_ds = DeepfakeDataset.from_split(
+    train_ds, val_ds, test_ds = DeepfakeDataset.from_split(
         root=data_cfg["train_dir"],
-        val_split=train_cfg.get("val_split", 0.2),
+        val_split=train_cfg.get("val_split", 0.125),
+        test_split=train_cfg.get("test_split", 0.125),
         seed=train_cfg.get("val_split_seed", 42),
         train_transform=train_transform,
         val_transform=val_transform,
+        test_transform=test_transform if test_transform is not None else val_transform,
     )
 
     # WeightedRandomSampler: ensure 1:1 real/fake ratio in each mini-batch
@@ -109,12 +112,20 @@ def build_dataloaders(
         num_workers=num_workers,
         pin_memory=pin_memory,
     )
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
 
     print(
         f"[Dataset] Train: {len(train_ds)} samples | "
-        f"Val: {len(val_ds)} samples"
+        f"Val: {len(val_ds)} samples | "
+        f"Test: {len(test_ds)} samples"
     )
-    return train_loader, val_loader
+    return train_loader, val_loader, test_loader
 
 
 # ---------------------------------------------------------------------------
@@ -279,10 +290,12 @@ class Trainer:
         config: dict,
         device: torch.device,
         output_dir: str = "checkpoints/",
+        test_loader: Optional[DataLoader] = None,
     ) -> None:
         self.model = model.to(device)
         self.train_loader = train_loader
         self.val_loader = val_loader
+        self.test_loader = test_loader
         self.config = config
         self.device = device
         self.output_dir = Path(output_dir)
@@ -482,7 +495,7 @@ class Trainer:
         return total_loss / max(n_batches, 1)
 
     @torch.no_grad()
-    def validate_epoch(self, epoch: int) -> float:
+    def validate_epoch(self, epoch: int, loader: Optional[DataLoader] = None) -> float:
         """
         Validate over the full validation set.
 
@@ -494,9 +507,12 @@ class Trainer:
         all_probs = []
         all_labels = []
 
+        eval_loader = loader if loader is not None else self.val_loader
+        desc = f"[Val]   Epoch {epoch + 1}" if loader is None else "[Test]  Evaluation"
+
         pbar = tqdm(
-            self.val_loader,
-            desc=f"[Val]   Epoch {epoch + 1}",
+            eval_loader,
+            desc=desc,
             leave=False,
         )
         for images, labels in pbar:
@@ -633,6 +649,17 @@ class Trainer:
                 break
 
         print(f"[Train] Finished. Best val AUC: {self.best_auc:.4f}")
+        
+        if getattr(self, "test_loader", None) is not None:
+            print("[Test] Evaluating best model on held-out test set...")
+            best_checkpoint = self.output_dir / "model_best.pth"
+            if best_checkpoint.exists():
+                self.load_checkpoint(str(best_checkpoint))
+            test_auc = self.validate_epoch(-1, loader=self.test_loader)
+            print(f"[Test] Final Test AUC: {test_auc:.4f}")
+            if self.use_wandb:
+                wandb.log({"test/auc": test_auc})
+                
         if self.use_wandb:
             wandb.finish()
 
